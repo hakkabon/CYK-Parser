@@ -8,7 +8,6 @@
 
 import Foundation
 import Grammar
-import Tokenizer
 
 /// The outcome of a parse attempt.
 public enum ParseResult {
@@ -32,11 +31,15 @@ public enum ParseResult {
 extension ParseResult {
     /// Returns all possible concrete syntax trees (ParseTree) for a successful parse.
     /// Returns an empty array if the parse failed.
-    public func allSyntaxTrees(startSymbol: NonTerminal, originalStart: NonTerminal, tokens: [Token]) -> [ParseTree] {
+    ///
+    /// - Parameter ranges: Per-token-index source ranges collected while
+    ///   scanning — `ranges.count` is the token count formerly read from a
+    ///   raw `[Token]` array.
+    public func allSyntaxTrees(startSymbol: NonTerminal, originalStart: NonTerminal, ranges: [Range<String.Index>]) -> [ParseTree] {
         switch self {
         case .success(_, let sppf):
-            let rootNode = SPPFNode.symbol(symbol: .nonTerminal(startSymbol), i: 0, j: tokens.count)
-            let rawTrees = sppf.allParseTrees(for: rootNode, tokens: tokens)
+            let rootNode = SPPFNode.symbol(symbol: .nonTerminal(startSymbol), i: 0, j: ranges.count)
+            let rawTrees = sppf.allParseTrees(for: rootNode, ranges: ranges)
             let transformer = TreeTransformer(originalStart: originalStart)
             return rawTrees.map { transformer.transform($0) }
         case .failure:

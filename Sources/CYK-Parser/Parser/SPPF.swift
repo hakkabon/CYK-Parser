@@ -7,7 +7,6 @@
 
 import Foundation
 import Grammar
-import Tokenizer
 
 public enum SPPFNode: Hashable, CustomStringConvertible {
     /// A symbol node representing a non-terminal or terminal spanning from `i` to `j`.
@@ -100,14 +99,19 @@ public class SPPFGraph: CustomStringConvertible {
 
 extension SPPFGraph {
     /// Extracts all possible `ParseTree`s from a given symbol node in the SPPF graph.
-    public func allParseTrees(for node: SPPFNode, tokens: [Token]) -> [ParseTree] {
+    ///
+    /// - Parameter ranges: Per-token-index source ranges (`ranges[i]` is the
+    ///   `Range<String.Index>` of the token at index `i`) — sourced from
+    ///   whichever `TokenStream` drove the parse, so this file has no
+    ///   dependency on any concrete tokenizer's token type.
+    public func allParseTrees(for node: SPPFNode, ranges: [Range<String.Index>]) -> [ParseTree] {
         switch node {
         case .symbol(let sym, let i, let j):
             switch sym {
             case .terminal:
                 // Terminal symbols return the range of the token at index i
-                guard i < tokens.count else { return [] }
-                return [.leaf(tokens[i].range)]
+                guard i < ranges.count else { return [] }
+                return [.leaf(ranges[i])]
                 
             case .nonTerminal(let A):
                 let packedNodes = getChildren(of: node).filter { $0.isPacked }
@@ -122,7 +126,7 @@ extension SPPFGraph {
                     switch rule {
                     case .terminal:
                         guard let termChild = childrenOfPacked.first else { continue }
-                        let subTrees = allParseTrees(for: termChild, tokens: tokens)
+                        let subTrees = allParseTrees(for: termChild, ranges: ranges)
                         results.append(contentsOf: subTrees)
                         
                     case .binary(let parentA, let B, let C):
@@ -145,8 +149,8 @@ extension SPPFGraph {
                         
                         guard let left = leftChild, let right = rightChild else { continue }
                         
-                        let leftTrees = allParseTrees(for: left, tokens: tokens)
-                        let rightTrees = allParseTrees(for: right, tokens: tokens)
+                        let leftTrees = allParseTrees(for: left, ranges: ranges)
+                        let rightTrees = allParseTrees(for: right, ranges: ranges)
                         
                         for lTree in leftTrees {
                             for rTree in rightTrees {

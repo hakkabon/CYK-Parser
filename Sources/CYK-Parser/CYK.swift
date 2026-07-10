@@ -8,7 +8,7 @@
 
 import Foundation
 import Grammar
-import Tokenizer
+import Lexer
 
 public class CYKParser: Parser, GeneralizedParser {    
     let startSymbol: NonTerminal
@@ -24,17 +24,19 @@ public class CYKParser: Parser, GeneralizedParser {
         self.originalStartSymbol = grammar.start
         self.rules = result.rules
     }
-    
+
+    // MARK: - Parser / GeneralizedParser protocols
+
     public func syntaxTree(for string: String) throws -> ParseTree {
-        let tokenizer = Tokenizer(string, symbols: Set(symbols), keywords: [])
-        let tokens = tokenizer.tokenize()
-        if tokens.isEmpty {
+        let stream = TokenizerStream(source: string, symbols: Set(symbols), keywords: [])
+        if stream.count == 0 {
             return .empty
         }
-        let result = try parse(string)
+        let (terminals, ranges) = try streamTerminals(stream)
+        let result = runCYK(terminals: terminals)
         switch result {
         case .success:
-            let trees = result.allSyntaxTrees(startSymbol: startSymbol, originalStart: originalStartSymbol, tokens: tokens)
+            let trees = result.allSyntaxTrees(startSymbol: startSymbol, originalStart: originalStartSymbol, ranges: ranges)
             guard let firstTree = trees.first else {
                 throw ParseError.internalError("Succeeded parsing but could not build any syntax tree.")
             }
@@ -45,37 +47,82 @@ public class CYKParser: Parser, GeneralizedParser {
     }
 
     public func allSyntaxTrees(for string: String) throws -> [ParseTree] {
-        let tokenizer = Tokenizer(string, symbols: Set(symbols), keywords: [])
-        let tokens = tokenizer.tokenize()
-        if tokens.isEmpty {
+        let stream = TokenizerStream(source: string, symbols: Set(symbols), keywords: [])
+        if stream.count == 0 {
             return [.empty]
         }
-        let result = try parse(string)
+        let (terminals, ranges) = try streamTerminals(stream)
+        let result = runCYK(terminals: terminals)
         switch result {
         case .success:
-            return result.allSyntaxTrees(startSymbol: startSymbol, originalStart: originalStartSymbol, tokens: tokens)
+            return result.allSyntaxTrees(startSymbol: startSymbol, originalStart: originalStartSymbol, ranges: ranges)
         case .failure(_, let message):
             throw ParseError.unexpectedToken(token: message, state: -1)
         }
     }
 
+    /// Parses `source` text using GrammarTokenizer's general-purpose
+    /// `Tokenizer` (configured with this parser's fixed `symbols` list), then
+    /// runs the CYK algorithm.
     public func parse(_ source: String) throws -> ParseResult {
-        let tokenizer = Tokenizer(source, symbols: Set(symbols), keywords: [])
-        let tokens: [Token] = tokenizer.tokenize()
-        let n = tokens.count
+        let stream = TokenizerStream(source: source, symbols: Set(symbols), keywords: [])
+        let (terminals, _) = try streamTerminals(stream)
+        return runCYK(terminals: terminals)
+    }
+
+    // MARK: - Lexer integration
+
+    /// Parses any `TokenStream` — the DFA-driven `LexerTokenStream` (built via
+    /// a `LexerBuilder` bootstrapped from a `GrammarVocabulary`) and the
+    /// hand-written `TokenizerStream` are both accepted interchangeably, as
+    /// is any other conformance — and runs the same CYK algorithm core as
+    /// `parse(_ string:)`.
+    ///
+    /// - Parameter stream: A positioned sequence of tokens, each resolvable
+    ///   to a `Terminal` and a source `Range<String.Index>`.
+    /// - Returns: `.success(bsr:sppf:)` on acceptance or `.failure(position:message:)`.
+    /// - Throws: whatever error `stream.terminal(at:)` throws for a lexical failure.
+    public func parse<S: TokenStream>(stream: S) throws -> ParseResult {
+        let (terminals, _) = try streamTerminals(stream)
+        return runCYK(terminals: terminals)
+    }
+
+    /// Materialises a `TokenStream` into parallel `Terminal` and
+    /// `Range<String.Index>` arrays, one entry per position.
+    private func streamTerminals<S: TokenStream>(_ stream: S) throws -> (terminals: [Terminal], ranges: [Range<String.Index>]) {
+        var terminals: [Terminal] = []
+        var ranges: [Range<String.Index>] = []
+        terminals.reserveCapacity(stream.count)
+        ranges.reserveCapacity(stream.count)
+        for position in 0..<stream.count {
+            let (terminal, range) = try stream.terminal(at: position)
+            terminals.append(terminal)
+            ranges.append(range)
+        }
+        return (terminals, ranges)
+    }
+
+    // MARK: - Algorithm core
+
+    /// The CYK dynamic-programming recognizer and SPPF builder, parameterised
+    /// purely on a `[Terminal]` — one per input position. Both
+    /// `parse(_ string:)` (via a default `TokenizerStream`) and
+    /// `parse(stream:)` (via any `TokenStream`) converge here, so the two
+    /// front ends can never drift apart on the actual parsing algorithm.
+    private func runCYK(terminals: [Terminal]) -> ParseResult {
+        let n = terminals.count
         if n == 0 {
             return .success(bsr: Set(), sppf: SPPFGraph())
         }
-        
+
         // Initialize DP Table: table[start_index][span_length] -> Set<NonTerminal>
         var table = Array(repeating: Array(repeating: Set<NonTerminal>(), count: n + 1), count: n)
         var bsrSet = Set<BSR>()
-        
+
         // Base Case: Length 1 (Terminals)
         for i in 0..<n {
-            let token = tokens[i]
-            let terminal = extractTerminal(token)
-            
+            let terminal = terminals[i]
+
             for rule in rules {
                 if case .terminal(let lhs, let rhs) = rule, rhs == terminal {
                     table[i][1].insert(lhs)
@@ -84,7 +131,7 @@ public class CYKParser: Parser, GeneralizedParser {
                 }
             }
         }
-        
+
         // Main Loop: Length 2 to n
         if n >= 2 {
             for length in 2...n {
@@ -92,7 +139,7 @@ public class CYKParser: Parser, GeneralizedParser {
                     for p in 1..<length {   // Partition (split point)
                         let leftCell = table[s][p]
                         let rightCell = table[s + p][length - p]
-                        
+
                         for B in leftCell {
                             for C in rightCell {
                                 for rule in rules {
@@ -109,25 +156,24 @@ public class CYKParser: Parser, GeneralizedParser {
                 }
             }
         }
-        
+
         // Check if startSymbol was successfully derived
         guard table[0][n].contains(startSymbol) else {
             return .failure(position: 0, message: "Parsing failed: start symbol '\(startSymbol)' not derived over full input.")
         }
-        
+
         // Build SPPF Graph
         let sppf = SPPFGraph()
         let rootNode = SPPFNode.symbol(symbol: .nonTerminal(startSymbol), i: 0, j: n)
         var visited = Set<SPPFNode>()
-        buildSPPF(symbolNode: rootNode, bsrSet: bsrSet, tokens: tokens, sppf: sppf, visited: &visited)
-        
+        buildSPPF(symbolNode: rootNode, bsrSet: bsrSet, sppf: sppf, visited: &visited)
+
         return .success(bsr: bsrSet, sppf: sppf)
     }
-    
+
     private func buildSPPF(
         symbolNode: SPPFNode,
         bsrSet: Set<BSR>,
-        tokens: [Token],
         sppf: SPPFGraph,
         visited: inout Set<SPPFNode>
     ) {
@@ -159,8 +205,8 @@ public class CYKParser: Parser, GeneralizedParser {
                     sppf.addEdge(from: packedNode, to: leftNode)
                     sppf.addEdge(from: packedNode, to: rightNode)
                     
-                    buildSPPF(symbolNode: leftNode, bsrSet: bsrSet, tokens: tokens, sppf: sppf, visited: &visited)
-                    buildSPPF(symbolNode: rightNode, bsrSet: bsrSet, tokens: tokens, sppf: sppf, visited: &visited)
+                    buildSPPF(symbolNode: leftNode, bsrSet: bsrSet, sppf: sppf, visited: &visited)
+                    buildSPPF(symbolNode: rightNode, bsrSet: bsrSet, sppf: sppf, visited: &visited)
                 }
             }
             
@@ -169,16 +215,6 @@ public class CYKParser: Parser, GeneralizedParser {
             
         case .metaSymbol:
             break
-        }
-    }
-    
-    private func extractTerminal(_ token: Token) -> Terminal {
-        switch token.type {
-        case .symbol(let s): return Terminal(string: s)
-        case .literal(let s): return Terminal(string: s)
-        case .identifier(let s): return Terminal(string: s)
-        case .number(let n): return Terminal(string: "\(n)") // simplified
-        default: return Terminal(string: token.description)
         }
     }
 }

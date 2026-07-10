@@ -82,6 +82,21 @@ case .failure(let position, let message):
 }
 ```
 
+### Parsing a `TokenStream` directly
+
+`parse(_ string:)` tokenizes with GrammarTokenizer's general-purpose `Tokenizer`. Any [Lexer](https://github.com/hakkabon/Lexer) `TokenStream` can be passed directly instead — including a DFA lexer bootstrapped from a `GrammarVocabulary`:
+
+```swift
+import Lexer
+
+var builder = LexerBuilder()
+builder.loadVocabulary(myGrammarVocabulary)
+let lexer = try builder.build()
+
+let stream = try LexerTokenStream(source: "id + id * id", lexer: lexer)
+let result = try parser.parse(stream: stream)
+```
+
 ---
 
 ## Command-Line Tool (`gtool`)
@@ -148,7 +163,7 @@ CYK-Parser/
 | Package | Role |  
 |---------|------|  
 | [hakkabon/Grammar](https://github.com/hakkabon/Grammar) | Grammar types, BNF/EBNF/WSN parsing |  
-| [hakkabon/GrammarTokenizer](https://github.com/hakkabon/GrammarTokenizer) | Input tokenization |  
+| [hakkabon/Lexer](https://github.com/hakkabon/Lexer) | `TokenStream` protocol + DFA/GrammarTokenizer front ends |  
 | [hakkabon/GrammarDiagram](https://github.com/hakkabon/GrammarDiagram) | Railroad diagram generation |  
 | [hakkabon/TerminalColors](https://github.com/hakkabon/TerminalColors) | Colored terminal output |  
 | [apple/swift-argument-parser](https://github.com/apple/swift-argument-parser) | CLI argument parsing (gtool) |  

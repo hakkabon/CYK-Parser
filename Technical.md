@@ -28,13 +28,13 @@ The algorithm's central idea is dynamic programming over all substrings of the i
 ### High-Level Pipeline
 
 ```
-Input String
+Input String                          any TokenStream
+     │                                       │
+     ▼                                       │
+TokenizerStream  ──► [Terminal]  ◀───────────┘
      │
      ▼
-Tokenizer  ──► Token[]
-     │
-     ▼
-CYKParser.parse()
+CYKParser.parse() / parse(stream:)
      │
      ├─► CNF DP Table  ──► BSR Set  ──► SPPF Graph
      │
@@ -50,6 +50,8 @@ TreeTransformer (remove CNF artifacts)
      ▼
 [ParseTree]  (one per distinct derivation)
 ```
+
+See [§8](#8-tokenization) for the two `TokenStream` front ends.
 
 ---
 
@@ -331,7 +333,30 @@ The `CustomStringConvertible` conformance delegates to `SyntaxTreePrinter` for c
 
 ## 8. Tokenization
 
-`CYKParser` delegates tokenization to the `Tokenizer` type from the `GrammarTokenizer` package. A fixed set of operator/punctuation symbols is pre-declared:
+`CYKParser` has two front ends that both converge on the same private `runCYK(terminals: [Terminal])` algorithm core, mirroring the split already documented for §4–§7 (which operate purely on `[Terminal]`/BSR/SPPF and have no tokenizer dependency at all):
+
+```
+                         Source string
+                              │
+           ┌───────────────────┴───────────────────┐
+           ▼                                        ▼
+  parse(_ string:)                          parse(stream: S)
+           │                                        │
+  TokenizerStream(source:symbols:)            any TokenStream
+  (this package's own `symbols` list)         (LexerTokenStream or
+           │                                   TokenizerStream)
+           └───────────────────┬───────────────────┘
+                                ▼  stream.terminal(at:) for each position
+                         [Terminal] + [Range<String.Index>]
+                                │
+                                ▼
+                    runCYK(terminals:) — CYK table + BSR + SPPF
+```
+
+Both front ends are provided by the [Lexer](https://github.com/hakkabon/Lexer) package's `TokenStream` protocol:
+
+- **`TokenizerStream`** wraps GrammarTokenizer's general-purpose `Tokenizer`, configured with this package's own fixed operator/punctuation `symbols` list (below) and no keywords, so identifier classification stays fully generic. This is what `parse(_ string:)`, `syntaxTree(for:)`, and `allSyntaxTrees(for:)` all use by default.
+- **`LexerTokenStream`** wraps a DFA lexer built by `LexerBuilder.loadVocabulary(_:)` from a `GrammarVocabulary` — useful when a grammar's terminals need proper regex-pattern matching or keyword/identifier priority resolution that `TokenizerStream`'s fixed lexical categories can't express.
 
 ```swift
 let symbols = ["|", "\\", "^", ":", ",", "$", ".", "\"", "¶", ">", "#",
@@ -339,7 +364,9 @@ let symbols = ["|", "\\", "^", ":", ",", "$", ".", "\"", "¶", ">", "#",
                ";", "/", "*", "?", "??", ":="]
 ```
 
-No custom keyword list is used (`keywords: []`), so identifier classification is fully generic. Token types produced by the tokenizer include `.symbol`, `.literal`, `.identifier`, and `.number`; `extractTerminal(_:)` maps each to a `Terminal` value by stringifying it.
+`TokenStream.terminal(at:)` returns a `(Terminal, Range<String.Index>)` pair directly — there is no separate `extractTerminal(_:)` step here (unlike the token-type switch a hand-rolled tokenizer bridge would need): `Lexer`'s `TokenizerStream` already performs that mapping once, uniformly, for every parser in the toolkit.
+
+`syntaxTree(for:)` and `allSyntaxTrees(for:)` collect both the `[Terminal]` array (fed to `runCYK`) and the parallel `[Range<String.Index>]` array (fed to `allSyntaxTrees(startSymbol:originalStart:ranges:)`, §7) from a single pass over the stream, rather than tokenizing twice as an implementation driven directly by `Tokenizer` would.
 
 ---
 
@@ -369,7 +396,7 @@ public protocol GeneralizedParser {
 
 Implemented by `CYKParser`. Returns a `ParseResult` that exposes the raw `BSRSet` and `SPPFGraph` in addition to the high-level syntax trees.
 
-`CYKParser` conforms to both protocols and also provides `allSyntaxTrees(for:)` — not part of either protocol but available directly on the class.
+`CYKParser` conforms to both protocols and also provides `allSyntaxTrees(for:)` and `parse<S: TokenStream>(stream:)` — neither is part of either protocol, but both are available directly on the class. `parse(stream:)` is the entry point for driving the parser from a `TokenStream` other than the default `TokenizerStream` (§8).
 
 ---
 
@@ -545,9 +572,11 @@ Then replace the rule-scan loop with a dictionary lookup, reducing the inner loo
 
 **Location:** `CYK.swift` lines 17–18
 
-**Problem:** The list of recognized operator symbols passed to the `Tokenizer` is a hardcoded array in the `CYKParser` initializer. Custom grammars that use symbols not in the list (e.g., `@`, `~`, `§`) will be tokenized incorrectly.
+**Problem:** The list of recognized operator symbols passed to the `TokenizerStream` (§8) is a hardcoded array in the `CYKParser` initializer. Custom grammars that use symbols not in the list (e.g., `@`, `~`, `§`) will be tokenized incorrectly through the default `parse(_ string:)`/`syntaxTree(for:)`/`allSyntaxTrees(for:)` entry points.
 
 **Suggested fix:** Extract the operator symbol set from the grammar's terminal alphabet at `init` time, so the tokenizer is always aligned with the grammar being parsed.
+
+**Workaround available today:** `parse(stream:)` (§8, §9) bypasses this hardcoded list entirely — build a `GrammarVocabulary` for the target grammar and drive the parser with a `LexerBuilder`-built `LexerTokenStream` instead of relying on the default `TokenizerStream`. The suggested fix above would still be worth doing, since it would make the *default* `parse(_ string:)` path correct without requiring a caller to hand-build a vocabulary.
 
 ### Issue 7 — `Unique.Comparable` Tautology
 
