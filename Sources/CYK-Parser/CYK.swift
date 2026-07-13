@@ -124,7 +124,12 @@ public class CYKParser: Parser, GeneralizedParser {
             let terminal = terminals[i]
 
             for rule in rules {
-                if case .terminal(let lhs, let rhs) = rule, rhs == terminal {
+                // `rhs` is the grammar's terminal from a CNF rule `A -> a` (possibly
+                // a regex/range/list terminal resolved from a `lexical { }`
+                // declaration); `terminal` is the concrete lexeme the stream
+                // produced at this position. matches(_:) is the asymmetric check
+                // for exactly this — see Terminal.matches(_:) in the Grammar package.
+                if case .terminal(let lhs, let rhs) = rule, rhs.matches(terminal) {
                     table[i][1].insert(lhs)
                     let bsr = BSR(rule: rule, i: i, k: i + 1, j: i + 1)
                     bsrSet.insert(bsr)

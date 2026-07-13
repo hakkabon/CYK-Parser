@@ -142,13 +142,21 @@ For every token at position `i`, all terminal CNF rules `A → token` are matche
 for i in 0..<n {
     let terminal = extractTerminal(tokens[i])
     for rule in rules {
-        if case .terminal(let lhs, let rhs) = rule, rhs == terminal {
+        if case .terminal(let lhs, let rhs) = rule, rhs.matches(terminal) {
             table[i][1].insert(lhs)
             bsrSet.insert(BSR(rule: rule, i: i, k: i + 1, j: i + 1))
         }
     }
 }
 ```
+
+`rhs` is the grammar's terminal from a CNF rule (possibly a regex/range/list
+terminal resolved from a `lexical { }` declaration); `terminal` is the
+concrete lexeme produced for that input position. `Terminal.matches(_:)` is
+the asymmetric "does this pattern accept that lexeme" check meant for this
+comparison — plain `==` is strict structural equality and won't match a
+regex/range/list terminal against a literal token; see the `Terminal`
+documentation in the Grammar package.
 
 ### Inductive Step (Length 2 to n)
 
