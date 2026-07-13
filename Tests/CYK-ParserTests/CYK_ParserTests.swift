@@ -688,18 +688,18 @@ func testFilterRemovesSubtrees() throws {
     #expect(filtered != nil)
 }
 
-@Test("explode() hoists children of matching inner nodes")
-func testExplodeHoistsChildren() throws {
+@Test("flattened() hoists children of matching inner nodes")
+func testFlattenHoistsChildren() throws {
     let grammarString = """
     <E> ::= <T> | <E> "+" <T>
     <T> ::= "id"
     """
     let grammar = try Grammar(bnf: grammarString, start: "E")
     let parser = CYKParser(grammar: grammar)
-
+    
     let tree = try parser.syntaxTree(for: "id + id")
-    let exploded = tree.explode { $0.name == "T" }
-    #expect(!exploded.isEmpty)
+    let flattened = tree.flattened(where: { $0.name == "T" } )
+    #expect(!flattened.isEmpty)
 }
 
 // MARK: - 18. Tree Equality
