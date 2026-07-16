@@ -100,11 +100,11 @@ import Grammar
     
     // Empty string
     let tree = try parser.syntaxTree(for: "")
-    #expect(tree == .empty)
+    #expect(tree.root == nil)
     
     let trees = try parser.allSyntaxTrees(for: "")
     #expect(trees.count == 1)
-    #expect(trees[0] == .empty)
+    #expect(trees[0].root == nil)
 }
 
 @Test func testSyntaxError() async throws {
@@ -159,7 +159,7 @@ func testEmptyInputSyntaxTree() throws {
     let parser = CYKParser(grammar: grammar)
 
     let tree = try parser.syntaxTree(for: "")
-    #expect(tree == .empty)
+    #expect(tree.root == nil)
 }
 
 @Test("Empty input allSyntaxTrees returns one .empty tree")
@@ -172,7 +172,7 @@ func testEmptyInputAllSyntaxTrees() throws {
 
     let trees = try parser.allSyntaxTrees(for: "")
     #expect(trees.count == 1)
-    #expect(trees[0] == .empty)
+    #expect(trees[0].root == nil)
 }
 
 @Test("Empty input parse() returns success with empty BSR set")
@@ -393,8 +393,12 @@ func testBSRSpanIndices() throws {
     let result = try parser.parse("a b")
     switch result {
     case .success(let bsr, _):
+        // Find any terminal BSR entry whose span starts at position 0.
+        // The CNF converter wraps each terminal t into a helper non-terminal
+        // T_<description>, so we match by rule kind and start index rather
+        // than by an internal name that depends on Terminal.description.
         let aEntry = bsr.first { entry in
-            if case .terminal(_, let t) = entry.rule, t.description == "a" { return true }
+            if case .terminal = entry.rule { return entry.i == 0 }
             return false
         }
         #expect(aEntry?.i == 0)

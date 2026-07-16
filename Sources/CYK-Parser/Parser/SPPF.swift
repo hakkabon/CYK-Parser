@@ -124,10 +124,12 @@ extension SPPFGraph {
                     let childrenOfPacked = getChildren(of: packed)
                     
                     switch rule {
-                    case .terminal:
+                    case .terminal(let parentA, _):
                         guard let termChild = childrenOfPacked.first else { continue }
                         let subTrees = allParseTrees(for: termChild, ranges: ranges)
-                        results.append(contentsOf: subTrees)
+                        for sub in subTrees {
+                            results.append(.node(parentA, children: [sub]))
+                        }
                         
                     case .binary(let parentA, let B, let C):
                         // Binary rule A -> B C spanning from i to j
