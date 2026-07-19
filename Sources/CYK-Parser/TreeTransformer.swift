@@ -8,6 +8,7 @@
 
 import Foundation
 import Grammar
+import Parser
 
 class TreeTransformer {
     

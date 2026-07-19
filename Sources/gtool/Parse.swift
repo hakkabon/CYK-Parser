@@ -10,6 +10,7 @@ import Foundation
 import ArgumentParser
 import Grammar
 import CYK_Parser
+import Parser
 import ShellOut
 
 ///  Parses any input sentence based on its given grammar specification.
@@ -41,7 +42,7 @@ extension GrammarTool {
                 try Grammar(bnf: try String(contentsOf: options.grammar), start: options.start)
             }
             
-            let parser: Parser = CYKParser(grammar: grammar)
+            let parser = CYKParser(grammar: grammar)
             
             switch input {
             case .arg(let inputString): // String input
@@ -54,7 +55,7 @@ extension GrammarTool {
             }
         }
                 
-        private func runAnalysis(_ analysis: Analysis, parser: Parser, input: String, grammar: Grammar) throws {
+        private func runAnalysis(_ analysis: Analysis, parser: CYKParser, input: String, grammar: Grammar) throws {
             
             switch analysis {
             case .tree:
@@ -67,24 +68,19 @@ extension GrammarTool {
                 try shellOut(to: ["echo '\(dotfile)' | dot -Tpdf > parse-tree.pdf", "open parse-tree.pdf"])
                 
             case .sppf:
-                if let genParser = parser as? GeneralizedParser {
-                    let result = try genParser.parse(input)
-                    switch result {
-                    case .success(let bsr, let sppf):
-                        print("Parse successful!")
-                        print("Has ambiguity: \(result.hasAmbiguity)")
-                        print("BSR Set:")
-                        for entry in bsr.sorted(by: { $0.description < $1.description }) {
-                            print("  \(entry)")
-                        }
-                        let dotfile = sppf.graphviz
-                        print("SPPF Graphviz generated.")
-                        try shellOut(to: ["echo '\(dotfile)' | dot -Tpdf > sppf.pdf", "open sppf.pdf"])
-                    case .failure(let pos, let message):
-                        print("Parse failed at position \(pos): \(message)")
+                let result = try parser.parse(input)
+                if result.isSuccessful, let sppf = result.sppfGraph {
+                    print("Parse successful!")
+                    print("Has ambiguity: \(result.hasAmbiguity)")
+                    print("BSR Set:")
+                    for entry in result.bsr.sorted(by: { $0.description < $1.description }) {
+                        print("  \(entry)")
                     }
+                    let dotfile = sppf.graphviz
+                    print("SPPF Graphviz generated.")
+                    try shellOut(to: ["echo '\(dotfile)' | dot -Tpdf > sppf.pdf", "open sppf.pdf"])
                 } else {
-                    print("Error: Parser does not support SPPF analysis.")
+                    print("Parse failed: input not recognized by the grammar.")
                 }
             }
         }

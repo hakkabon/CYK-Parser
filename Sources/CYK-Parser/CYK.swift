@@ -9,8 +9,11 @@
 import Foundation
 import Grammar
 import Lexer
+import Parser
 
-public class CYKParser: Parser, GeneralizedParser {    
+public final class CYKParser: DeterministicParser, GeneralizedParser {
+    public typealias Label = CNFRule
+
     let startSymbol: NonTerminal
     let originalStartSymbol: NonTerminal
     let rules: Set<CNFRule>
@@ -25,7 +28,7 @@ public class CYKParser: Parser, GeneralizedParser {
         self.rules = result.rules
     }
 
-    // MARK: - Parser / GeneralizedParser protocols
+    // MARK: - DeterministicParser / GeneralizedParser protocols
 
     public func syntaxTree(for string: String) throws -> ParseTree {
         let stream = TokenizerStream(source: string, symbols: Set(symbols), keywords: [])
@@ -34,16 +37,14 @@ public class CYKParser: Parser, GeneralizedParser {
         }
         let (terminals, ranges) = try streamTerminals(stream)
         let result = runCYK(terminals: terminals)
-        switch result {
-        case .success:
-            let trees = result.allSyntaxTrees(startSymbol: startSymbol, originalStart: originalStartSymbol, ranges: ranges)
-            guard let firstTree = trees.first else {
-                throw ParseError.internalError("Succeeded parsing but could not build any syntax tree.")
-            }
-            return firstTree
-        case .failure(_, let message):
-            throw ParseError.unexpectedToken(token: message, state: -1)
+        guard result.isSuccessful, let sppfGraph = result.sppfGraph else {
+            throw ParseError.unexpectedToken(token: failureMessage(for: string), state: -1)
         }
+        let trees = parseTrees(from: sppfGraph, ranges: ranges, string: string)
+        guard let firstTree = trees.first else {
+            throw ParseError.internalError("Succeeded parsing but could not build any syntax tree.")
+        }
+        return firstTree
     }
 
     public func allSyntaxTrees(for string: String) throws -> [ParseTree] {
@@ -53,18 +54,16 @@ public class CYKParser: Parser, GeneralizedParser {
         }
         let (terminals, ranges) = try streamTerminals(stream)
         let result = runCYK(terminals: terminals)
-        switch result {
-        case .success:
-            return result.allSyntaxTrees(startSymbol: startSymbol, originalStart: originalStartSymbol, ranges: ranges)
-        case .failure(_, let message):
-            throw ParseError.unexpectedToken(token: message, state: -1)
+        guard result.isSuccessful, let sppfGraph = result.sppfGraph else {
+            throw ParseError.unexpectedToken(token: failureMessage(for: string), state: -1)
         }
+        return parseTrees(from: sppfGraph, ranges: ranges, string: string)
     }
 
     /// Parses `source` text using GrammarTokenizer's general-purpose
     /// `Tokenizer` (configured with this parser's fixed `symbols` list), then
     /// runs the CYK algorithm.
-    public func parse(_ source: String) throws -> ParseResult {
+    public func parse(_ source: String) throws -> ParseResult<CNFRule> {
         let stream = TokenizerStream(source: source, symbols: Set(symbols), keywords: [])
         let (terminals, _) = try streamTerminals(stream)
         return runCYK(terminals: terminals)
@@ -80,9 +79,9 @@ public class CYKParser: Parser, GeneralizedParser {
     ///
     /// - Parameter stream: A positioned sequence of tokens, each resolvable
     ///   to a `Terminal` and a source `Range<String.Index>`.
-    /// - Returns: `.success(bsr:sppf:)` on acceptance or `.failure(position:message:)`.
+    /// - Returns: A `ParseResult` describing success, the BSR set, and the SPPF graph.
     /// - Throws: whatever error `stream.terminal(at:)` throws for a lexical failure.
-    public func parse<S: TokenStream>(stream: S) throws -> ParseResult {
+    public func parse<S: TokenStream>(stream: S) throws -> ParseResult<CNFRule> {
         let (terminals, _) = try streamTerminals(stream)
         return runCYK(terminals: terminals)
     }
@@ -102,6 +101,18 @@ public class CYKParser: Parser, GeneralizedParser {
         return (terminals, ranges)
     }
 
+    /// Builds the natural-grammar parse trees for a successful parse's SPPF
+    /// graph, un-doing the CNF conversion via `TreeTransformer`.
+    private func parseTrees(from sppfGraph: SPPFGraph<CNFRule>, ranges: [Range<String.Index>], string: String) -> [ParseTree] {
+        let rawTrees = sppfGraph.buildAllParseTrees(startSymbol: startSymbol.name, ranges: ranges, string: string)
+        let transformer = TreeTransformer(originalStart: originalStartSymbol)
+        return rawTrees.map { transformer.transform($0) }
+    }
+
+    private func failureMessage(for string: String) -> String {
+        return "Parsing failed: input '\(string)' not derived from start symbol '\(originalStartSymbol)'."
+    }
+
     // MARK: - Algorithm core
 
     /// The CYK dynamic-programming recognizer and SPPF builder, parameterised
@@ -109,15 +120,15 @@ public class CYKParser: Parser, GeneralizedParser {
     /// `parse(_ string:)` (via a default `TokenizerStream`) and
     /// `parse(stream:)` (via any `TokenStream`) converge here, so the two
     /// front ends can never drift apart on the actual parsing algorithm.
-    private func runCYK(terminals: [Terminal]) -> ParseResult {
+    private func runCYK(terminals: [Terminal]) -> ParseResult<CNFRule> {
         let n = terminals.count
         if n == 0 {
-            return .success(bsr: Set(), sppf: SPPFGraph())
+            return ParseResult(isSuccessful: true, bsr: Set(), sppfGraph: SPPFGraph<CNFRule>())
         }
 
         // Initialize DP Table: table[start_index][span_length] -> Set<NonTerminal>
         var table = Array(repeating: Array(repeating: Set<NonTerminal>(), count: n + 1), count: n)
-        var bsrSet = Set<BSR>()
+        var bsrSet = Set<BSR<CNFRule>>()
 
         // Base Case: Length 1 (Terminals)
         for i in 0..<n {
@@ -131,7 +142,12 @@ public class CYKParser: Parser, GeneralizedParser {
                 // for exactly this — see Terminal.matches(_:) in the Grammar package.
                 if case .terminal(let lhs, let rhs) = rule, rhs.matches(terminal) {
                     table[i][1].insert(lhs)
-                    let bsr = BSR(rule: rule, i: i, k: i + 1, j: i + 1)
+                    // A single-symbol production's pivot equals its leftExtent:
+                    // there is no split, the one child spans the whole [i, i+1)
+                    // range. This matches the convention the shared CST
+                    // enumeration algorithm (Parser module) expects for a
+                    // packed node with exactly one child.
+                    let bsr = BSR(label: rule, leftExtent: i, pivot: i, rightExtent: i + 1)
                     bsrSet.insert(bsr)
                 }
             }
@@ -151,7 +167,7 @@ public class CYKParser: Parser, GeneralizedParser {
                                     if case .binary(let A, let ruleB, let ruleC) = rule,
                                        ruleB == B, ruleC == C {
                                         table[s][length].insert(A)
-                                        let bsr = BSR(rule: rule, i: s, k: s + p, j: s + length)
+                                        let bsr = BSR(label: rule, leftExtent: s, pivot: s + p, rightExtent: s + length)
                                         bsrSet.insert(bsr)
                                     }
                                 }
@@ -164,62 +180,58 @@ public class CYKParser: Parser, GeneralizedParser {
 
         // Check if startSymbol was successfully derived
         guard table[0][n].contains(startSymbol) else {
-            return .failure(position: 0, message: "Parsing failed: start symbol '\(startSymbol)' not derived over full input.")
+            return ParseResult(isSuccessful: false, bsr: bsrSet, sppfGraph: nil)
         }
 
         // Build SPPF Graph
-        let sppf = SPPFGraph()
-        let rootNode = SPPFNode.symbol(symbol: .nonTerminal(startSymbol), i: 0, j: n)
-        var visited = Set<SPPFNode>()
+        let sppf = SPPFGraph<CNFRule>()
+        let rootNode = SPPFNode<CNFRule>.symbol(label: startSymbol.name, leftExtent: 0, rightExtent: n)
+        var visited = Set<SPPFNode<CNFRule>>()
         buildSPPF(symbolNode: rootNode, bsrSet: bsrSet, sppf: sppf, visited: &visited)
 
-        return .success(bsr: bsrSet, sppf: sppf)
+        return ParseResult(isSuccessful: true, bsr: bsrSet, sppfGraph: sppf)
     }
 
     private func buildSPPF(
-        symbolNode: SPPFNode,
-        bsrSet: Set<BSR>,
-        sppf: SPPFGraph,
-        visited: inout Set<SPPFNode>
+        symbolNode: SPPFNode<CNFRule>,
+        bsrSet: Set<BSR<CNFRule>>,
+        sppf: SPPFGraph<CNFRule>,
+        visited: inout Set<SPPFNode<CNFRule>>
     ) {
         guard !visited.contains(symbolNode) else { return }
         visited.insert(symbolNode)
-        sppf.addNode(symbolNode)
-        
-        guard case .symbol(let sym, let i, let j) = symbolNode else { return }
-        
-        switch sym {
-        case .nonTerminal(let A):
-            let matchingBSRs = bsrSet.filter { bsr in
-                bsr.i == i && bsr.j == j && bsr.rule.goal == A
+        sppf.add(symbolNode)
+
+        guard case let .symbol(label, i, j) = symbolNode else { return }
+        let A = NonTerminal(name: label)
+
+        let matchingBSRs = bsrSet.filter { bsr in
+            bsr.leftExtent == i && bsr.rightExtent == j && bsr.label.goal == A
+        }
+
+        for bsr in matchingBSRs {
+            let packedNode = SPPFNode<CNFRule>.packed(label: bsr.label, leftExtent: i, rightExtent: j, pivot: bsr.pivot)
+            sppf.add(packedNode)
+            sppf.addEdge(from: symbolNode, to: packedNode)
+
+            switch bsr.label {
+            case .terminal(_, let t):
+                let leafNode = SPPFNode<CNFRule>.leaf(label: t.description, leftExtent: i, rightExtent: j)
+                sppf.add(leafNode)
+                sppf.addEdge(from: packedNode, to: leafNode)
+
+            case .binary(_, let B, let C):
+                let leftNode = SPPFNode<CNFRule>.symbol(label: B.name, leftExtent: i, rightExtent: bsr.pivot)
+                let rightNode = SPPFNode<CNFRule>.symbol(label: C.name, leftExtent: bsr.pivot, rightExtent: j)
+
+                sppf.add(leftNode)
+                sppf.add(rightNode)
+                sppf.addEdge(from: packedNode, to: leftNode)
+                sppf.addEdge(from: packedNode, to: rightNode)
+
+                buildSPPF(symbolNode: leftNode, bsrSet: bsrSet, sppf: sppf, visited: &visited)
+                buildSPPF(symbolNode: rightNode, bsrSet: bsrSet, sppf: sppf, visited: &visited)
             }
-            
-            for bsr in matchingBSRs {
-                let packedNode = SPPFNode.packed(rule: bsr.rule, k: bsr.k, i: i, j: j)
-                sppf.addEdge(from: symbolNode, to: packedNode)
-                
-                switch bsr.rule {
-                case .terminal(_, let t):
-                    let termNode = SPPFNode.symbol(symbol: .terminal(t), i: i, j: j)
-                    sppf.addEdge(from: packedNode, to: termNode)
-                    
-                case .binary(_, let B, let C):
-                    let leftNode = SPPFNode.symbol(symbol: .nonTerminal(B), i: i, j: bsr.k)
-                    let rightNode = SPPFNode.symbol(symbol: .nonTerminal(C), i: bsr.k, j: j)
-                    
-                    sppf.addEdge(from: packedNode, to: leftNode)
-                    sppf.addEdge(from: packedNode, to: rightNode)
-                    
-                    buildSPPF(symbolNode: leftNode, bsrSet: bsrSet, sppf: sppf, visited: &visited)
-                    buildSPPF(symbolNode: rightNode, bsrSet: bsrSet, sppf: sppf, visited: &visited)
-                }
-            }
-            
-        case .terminal:
-            break
-            
-        case .metaSymbol:
-            break
         }
     }
 }

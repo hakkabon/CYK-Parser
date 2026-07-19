@@ -8,6 +8,7 @@
 
 import Foundation
 import Grammar
+import Parser
 
 // MARK: - Extensions for Logic
 // Helper to generate unique names for new non-terminals created during CNF conversion
@@ -20,7 +21,7 @@ class IDGenerator {
 }
 
 // A specific production type for CNF: Either A -> BC or A -> a
-public enum CNFRule: Hashable, CustomStringConvertible {
+public enum CNFRule: Hashable, Codable, CustomStringConvertible, SPPFLabel {
     case binary(NonTerminal, NonTerminal, NonTerminal) // A -> B C
     case terminal(NonTerminal, Terminal)               // A -> a
     
@@ -29,6 +30,22 @@ public enum CNFRule: Hashable, CustomStringConvertible {
         case .binary(let lhs, _, _): return lhs
         case .terminal(let lhs, _): return lhs
         }
+    }
+
+    /// The right-hand-side symbols of this rule — `[B, C]` for `A -> B C`,
+    /// or `[a]` for `A -> a`. Required by `SPPFLabel`.
+    public var symbols: [Symbol] {
+        switch self {
+        case .binary(_, let b, let c): return [.nonTerminal(b), .nonTerminal(c)]
+        case .terminal(_, let t): return [.terminal(t)]
+        }
+    }
+
+    /// A CYK packed node always represents a fully-applied production — CYK
+    /// has no notion of a partially-matched dotted item — so the dot sits at
+    /// the end of `symbols`. Required by `SPPFLabel`.
+    public var position: Int {
+        return symbols.count
     }
     
     public var description: String {

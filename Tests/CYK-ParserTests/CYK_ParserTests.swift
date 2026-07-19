@@ -1,5 +1,6 @@
 import Testing
 import Grammar
+import Parser
 @testable import CYK_Parser
 
 @Test func testUnambiguousExpression() async throws {
@@ -15,10 +16,9 @@ import Grammar
     let result = try parser.parse(input)
     
     // Check that it parsed successfully and is unambiguous
-    switch result {
-    case .success(let bsr, let sppf):
+    if result.isSuccessful {
         #expect(!result.hasAmbiguity)
-        #expect(bsr.count > 0)
+        #expect(result.bsr.count > 0)
         
         let trees = try parser.allSyntaxTrees(for: input)
         #expect(trees.count == 1)
@@ -26,8 +26,8 @@ import Grammar
         // Let's inspect the tree structure
         let tree = trees[0]
         #expect(tree.root?.name == "E")
-    case .failure(_, let msg):
-        Issue.record("Failed to parse unambiguous expression: \(msg)")
+    } else {
+        Issue.record("Failed to parse unambiguous expression")
     }
 }
 
@@ -42,10 +42,9 @@ import Grammar
     let input = "a a a"
     let result = try parser.parse(input)
     
-    switch result {
-    case .success(let bsr, let sppf):
+    if result.isSuccessful {
         #expect(result.hasAmbiguity)
-        #expect(bsr.count > 0)
+        #expect(result.bsr.count > 0)
         
         let trees = try parser.allSyntaxTrees(for: input)
         // Highly ambiguous: S -> S S can group as (S S) S or S (S S).
@@ -56,8 +55,8 @@ import Grammar
         for (i, tree) in trees.enumerated() {
             print("Tree \(i + 1):\n\(tree)")
         }
-    case .failure(_, let msg):
-        Issue.record("Failed to parse ambiguous S ::= S S: \(msg)")
+    } else {
+        Issue.record("Failed to parse ambiguous S ::= S S")
     }
 }
 
@@ -72,8 +71,7 @@ import Grammar
     let input = "id + id * id"
     let result = try parser.parse(input)
     
-    switch result {
-    case .success(let bsr, let sppf):
+    if result.isSuccessful {
         #expect(result.hasAmbiguity)
         
         let trees = try parser.allSyntaxTrees(for: input)
@@ -86,8 +84,8 @@ import Grammar
         for (idx, tree) in trees.enumerated() {
             print("Tree \(idx):\n\(tree)")
         }
-    case .failure(_, let msg):
-        Issue.record("Failed to parse precedence expression: \(msg)")
+    } else {
+        Issue.record("Failed to parse precedence expression")
     }
 }
 
@@ -184,11 +182,10 @@ func testEmptyInputParseResult() throws {
     let parser = CYKParser(grammar: grammar)
 
     let result = try parser.parse("")
-    switch result {
-    case .success(let bsr, _):
-        #expect(bsr.isEmpty)
-    case .failure(_, let msg):
-        Issue.record("Expected success for empty input, got: \(msg)")
+    if result.isSuccessful {
+        #expect(result.bsr.isEmpty)
+    } else {
+        Issue.record("Expected success for empty input")
     }
 }
 
@@ -207,7 +204,7 @@ func testSyntaxErrorThrows() throws {
     }
 }
 
-@Test("parse() returns .failure for invalid input")
+@Test("parse() returns a result with isSuccessful == false for invalid input")
 func testParseReturnsFailure() throws {
     let grammarString = """
     <S> ::= "a" "b"
@@ -216,13 +213,8 @@ func testParseReturnsFailure() throws {
     let parser = CYKParser(grammar: grammar)
 
     let result = try parser.parse("a c")
-    switch result {
-    case .success:
-        Issue.record("Expected failure but got success.")
-    case .failure(let pos, let msg):
-        #expect(pos == 0)
-        #expect(!msg.isEmpty)
-    }
+    #expect(!result.isSuccessful)
+    #expect(result.sppfGraph == nil)
 }
 
 // MARK: - 4. Unambiguous Grammar / Single Parse Tree
@@ -237,15 +229,14 @@ func testUnambiguousExpressionSingleTree() throws {
     let parser = CYKParser(grammar: grammar)
 
     let result = try parser.parse("id + id")
-    switch result {
-    case .success(let bsr, _):
+    if result.isSuccessful {
         #expect(!result.hasAmbiguity)
-        #expect(bsr.count > 0)
+        #expect(result.bsr.count > 0)
         let trees = try parser.allSyntaxTrees(for: "id + id")
         #expect(trees.count == 1)
         #expect(trees[0].root?.name == "E")
-    case .failure(_, let msg):
-        Issue.record("Unexpected failure: \(msg)")
+    } else {
+        Issue.record("Unexpected failure")
     }
 }
 
@@ -374,11 +365,10 @@ func testBSRSetNonEmpty() throws {
     let parser = CYKParser(grammar: grammar)
 
     let result = try parser.parse("a b")
-    switch result {
-    case .success(let bsr, _):
-        #expect(bsr.count > 0)
-    case .failure(_, let msg):
-        Issue.record("Unexpected failure: \(msg)")
+    if result.isSuccessful {
+        #expect(result.bsr.count > 0)
+    } else {
+        Issue.record("Unexpected failure")
     }
 }
 
@@ -391,19 +381,18 @@ func testBSRSpanIndices() throws {
     let parser = CYKParser(grammar: grammar)
 
     let result = try parser.parse("a b")
-    switch result {
-    case .success(let bsr, _):
+    if result.isSuccessful {
         // Find any terminal BSR entry whose span starts at position 0.
         // The CNF converter wraps each terminal t into a helper non-terminal
         // T_<description>, so we match by rule kind and start index rather
         // than by an internal name that depends on Terminal.description.
-        let aEntry = bsr.first { entry in
-            if case .terminal = entry.rule { return entry.i == 0 }
+        let aEntry = result.bsr.first { entry in
+            if case .terminal = entry.label { return entry.leftExtent == 0 }
             return false
         }
-        #expect(aEntry?.i == 0)
-    case .failure(_, let msg):
-        Issue.record("Unexpected failure: \(msg)")
+        #expect(aEntry?.leftExtent == 0)
+    } else {
+        Issue.record("Unexpected failure")
     }
 }
 
@@ -418,13 +407,15 @@ func testSPPFContainsSymbolNodes() throws {
     let parser = CYKParser(grammar: grammar)
 
     let result = try parser.parse("a")
-    switch result {
-    case .success(_, let sppf):
+    if result.isSuccessful, let sppf = result.sppfGraph {
         #expect(!sppf.getAllNodes().isEmpty)
-        let hasSymbol = sppf.getAllNodes().contains { !$0.isPacked }
+        let hasSymbol = sppf.getAllNodes().contains {
+            if case .symbol = $0 { return true }
+            return false
+        }
         #expect(hasSymbol)
-    case .failure(_, let msg):
-        Issue.record("Unexpected failure: \(msg)")
+    } else {
+        Issue.record("Unexpected failure")
     }
 }
 
@@ -437,12 +428,14 @@ func testSPPFPackedNodeCountForAmbiguity() throws {
     let parser = CYKParser(grammar: grammar)
 
     let result = try parser.parse("a a a")
-    switch result {
-    case .success(_, let sppf):
-        let packedCount = sppf.getAllNodes().filter { $0.isPacked }.count
+    if result.isSuccessful, let sppf = result.sppfGraph {
+        let packedCount = sppf.getAllNodes().filter {
+            if case .packed = $0 { return true }
+            return false
+        }.count
         #expect(packedCount > 1)
-    case .failure(_, let msg):
-        Issue.record("Unexpected failure: \(msg)")
+    } else {
+        Issue.record("Unexpected failure")
     }
 }
 
@@ -455,15 +448,13 @@ func testSPPFGraphvizOutput() throws {
     let parser = CYKParser(grammar: grammar)
 
     let result = try parser.parse("id + id")
-    switch result {
-    case .success(_, let sppf):
+    if result.isSuccessful, let sppf = result.sppfGraph {
         let dot = sppf.graphviz
-        #expect(dot.hasPrefix("digraph SPPF {"))
-        #expect(dot.hasSuffix("}"))
+        #expect(dot.hasPrefix("digraph \"SPPF\" {"))
+        #expect(dot.hasSuffix("}\n"))
         #expect(dot.contains("shape=box"))
-        #expect(dot.contains("shape=ellipse"))
-    case .failure(_, let msg):
-        Issue.record("Unexpected failure: \(msg)")
+    } else {
+        Issue.record("Unexpected failure")
     }
 }
 
@@ -596,15 +587,10 @@ func testGeneralizedParserConformance() throws {
     <S> ::= "a"
     """
     let grammar = try Grammar(bnf: grammarString, start: "S")
-    let genParser: any GeneralizedParser = CYKParser(grammar: grammar)
+    let parser = CYKParser(grammar: grammar)
 
-    let result = try genParser.parse("a")
-    switch result {
-    case .success(let bsr, _):
-        #expect(bsr.count > 0)
-    case .failure(_, let msg):
-        Issue.record("Unexpected failure: \(msg)")
-    }
+    let result: ParseResult<CNFRule> = try parser.parse("a")
+    #expect(result.isSuccessful)
 }
 
 // MARK: - 15. hasAmbiguity Property
