@@ -5,13 +5,10 @@ import PackageDescription
 
 let package = Package(
     name: "CYK-Parser",
-    platforms: [
-        .macOS(.v11),
-        .iOS(.v14),
-    ],
+    platforms: [.macOS(.v11), .iOS(.v14)],
     products: [
-        .library(
-            name: "CYK-Parser", targets: ["CYK-Parser"]),
+        .library(name: "CYK-Parser", targets: ["CYK-Parser"]),
+        .executable(name: "cyk-gtool", targets: ["cyk-gtool"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.6.2"),
@@ -44,7 +41,7 @@ let package = Package(
         ),
         // Move executable target to its destination (grammar toolbox) when library confirmed working.
         .executableTarget(
-            name: "gtool",
+            name: "cyk-gtool",
             dependencies: [
                 "CYK-Parser",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
@@ -52,7 +49,8 @@ let package = Package(
                 .product(name: "Grammar", package: "Grammar"),
                 .product(name: "GrammarDiagram", package: "GrammarDiagram"),
                 .product(name: "Parser", package: "Parser"),
-            ]
+            ],
+            path: "Sources/gtool"
         ),
     ]
 )
