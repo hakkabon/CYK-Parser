@@ -767,3 +767,15 @@ func testTwoTokenMinimalGrammar() throws {
     #expect(!parser.recognizes("a"))
     #expect(!parser.recognizes("b"))
 }
+
+@Test("CYK exports its transformed production-aware forest")
+func testPortableParserContract() throws {
+    let grammar = try Grammar(bnf: "<S> ::= \"hello\"", start: "S")
+    let result = try CYKParser(grammar: grammar).parse("hello")
+    let snapshot = try result.contractSnapshot(
+        engine: .init(identity: "cyk", displayName: "CYK", algorithm: "cyk")
+    )
+
+    #expect(snapshot.status == .accepted)
+    #expect(snapshot.forest?.nodes.contains { $0.productionID != nil } == true)
+}

@@ -21,7 +21,7 @@ class IDGenerator {
 }
 
 // A specific production type for CNF: Either A -> BC or A -> a
-public enum CNFRule: Hashable, Codable, CustomStringConvertible, SPPFLabel {
+public enum CNFRule: Hashable, Codable, CustomStringConvertible, ProductionIdentifiedSPPFLabel {
     case binary(NonTerminal, NonTerminal, NonTerminal) // A -> B C
     case terminal(NonTerminal, Terminal)               // A -> a
     
@@ -46,6 +46,11 @@ public enum CNFRule: Hashable, Codable, CustomStringConvertible, SPPFLabel {
     /// the end of `symbols`. Required by `SPPFLabel`.
     public var position: Int {
         return symbols.count
+    }
+
+    /// Stable identity for this transformed CNF production.
+    public var productionID: GrammarProductionID {
+        GrammarProductionID(goal: goal, symbols: symbols)
     }
     
     public var description: String {
@@ -200,4 +205,3 @@ class CNFConverter {
         }
     }
 }
-
