@@ -2,6 +2,10 @@
 
 A Swift implementation of the **Cocke–Younger–Kasami (CYK)** parsing algorithm — a general-purpose, chart-based parser that can recognize and parse any context-free grammar (CFG). The library handles ambiguous grammars natively, returning all possible syntax trees via a Shared Packed Parse Forest (SPPF).
 
+Release 0.2.1 owns a CNF-compatible, evidence-checked CYK workload. Run
+`swift run -c release cyk-microbenchmark [report.json]`; normalization remains
+outside the timed boundary and the report retains BSR/SPPF correctness counters.
+
 [![Swift 5.9+](https://img.shields.io/badge/Swift-5.9%2B-orange.svg)](https://swift.org)  
 [![Platforms](https://img.shields.io/badge/platforms-macOS%2011%20%7C%20iOS%2014-blue.svg)](https://developer.apple.com/swift/)  
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)  
@@ -179,7 +183,7 @@ Add the dependency to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/hakkabon/CYK-Parser.git", branch: "main"),
+    .package(url: "https://github.com/hakkabon/CYK-Parser.git", .upToNextMinor(from: "0.2.1")),
 ],
 targets: [
     .target(
